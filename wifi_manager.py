@@ -1,4 +1,4 @@
-# Author: Igor Ferreira
+# Author: Igor Ferreira / D.Friedrich
 # License: MIT
 # Version: 2.0.0
 # Description: WiFi Manager for ESP8266 and ESP32 using MicroPython.
