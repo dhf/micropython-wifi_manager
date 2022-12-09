@@ -151,8 +151,10 @@ class WifiManager:
                         self._handle_configure()
                     else:
                         self._handle_not_found()
-            except Exception:
-                print('Something went wrong! Reboot and try again.')
+            except Exception as ex:
+                template = "An exception of type {0} occurred. Arguments:\n{1!r}"
+                message = template.format(type(ex).__name__, ex.args)
+                print('Something went wrong! Reboot and try again.\n%s' % message)
                 return
             finally:
                 self.client.close()
@@ -161,10 +163,11 @@ class WifiManager:
         self.client.send("""HTTP/1.1 {0} OK\r\n""".format(status_code))
         self.client.send("""Content-Type: text/html\r\n""")
         self.client.send("""Connection: close\r\n""")
+        self.client.send("\r\n")
 
     def _send_response(self, payload, status_code=200):
         self._send_header(status_code)
-        self.client.sendall("""
+        self.client.sendall("""\
             <!DOCTYPE html>
             <html lang="en">
                 <head>
@@ -172,6 +175,29 @@ class WifiManager:
                     <meta charset="UTF-8">
                     <meta name="viewport" content="width=device-width, initial-scale=1">
                     <link rel="icon" href="data:,">
+                    <style>
+                        html {{
+                            background-color: #eee;
+                        }}
+                        body {{ 
+                            font-family: sans-serif;
+                            max-width: 500px;
+                            margin: 25px auto;
+                            font-size: 1rem;
+                        }}
+                        #container {{
+                            border: outset silver 1px;
+                            background-color: white;
+                            padding: 25px;
+                            margin: 0 0 50px 0;
+                            color: #000;
+                            font-size: 1rem;
+                        }}
+                        h1 {{
+                            margin-top: 0;
+                            text-align: center;
+                        }}
+                    </style>
                 </head>
                 <body>
                     {0}
@@ -181,34 +207,29 @@ class WifiManager:
         self.client.close()
 
     def _handle_root(self):
-        self._send_header()
-        self.client.sendall("""
-            <!DOCTYPE html>
-            <html lang="en">
-                <head>
-                    <title>WiFi Manager</title>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                    <link rel="icon" href="data:,">
-                </head>
-                <body>
+        payload = """\
+                    <div id="container">
                     <h1>{0}</h1>
                     <form action="/configure" method="post" accept-charset="utf-8">
-        """.format(self.ap_ssid))
+        """.format(self.ap_ssid)
         all_ssids = (ssid.decode('utf-8') for ssid, *_ in self.wlan_sta.scan())
         unique_ssids = list(set(all_ssids))
         for ssid in sorted(unique_ssids):
-            self.client.sendall("""
-                        <p><input type="radio" name="ssid" value="{0}" id="{0}"><label for="{0}">&nbsp;{0}</label></p>
-            """.format(ssid))
-        self.client.sendall("""
+            payload += """
+                       <div><label><input type="radio" name="ssid" value="{0}" />&nbsp;{0}</label></div>
+            """.format(ssid)
+        payload += """
                         <p><label for="password">Password:&nbsp;</label><input type="password" id="password" name="password"></p>
                         <p><input type="submit" value="Connect"></p>
                     </form>
-                </body>
-            </html>
-        """)
-        self.client.close()
+                    </div>
+                    <p>
+                Your ssid and password information will be saved into the file {0}
+                in your ESP module for future usage.
+                Be careful about security!
+            </p>
+        """.format(self.sta_profiles)
+        self._send_response(payload)
 
     def _handle_configure(self):
         match = ure.search('ssid=(.*)&password=(.*)', self.request)
