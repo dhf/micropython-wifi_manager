@@ -48,15 +48,15 @@ class WifiManager:
     def connect(self):
         if self.wlan_sta.isconnected():
             return
-        profiles = self.__ReadProfiles()
+        profiles = self._read_profiles()
         for ssid, *_ in self.wlan_sta.scan():
             ssid = ssid.decode("utf-8")
             if ssid in profiles:
                 password = profiles[ssid]
-                if self.__WifiConnect(ssid, password):
+                if self._wifi_connect(ssid, password):
                     return
         print('Could not connect to any WiFi network. Starting the configuration portal...')
-        self.__WebServer()
+        self._web_server()
 
     def disconnect(self):
         if self.wlan_sta.isconnected():
@@ -68,14 +68,21 @@ class WifiManager:
     def get_address(self):
         return self.wlan_sta.ifconfig()
 
-    def __WriteProfiles(self, profiles):
+    def delete_profiles(self):
+        try:
+            if os.path.exists(self.sta_profiles):
+                os.remove(self.sta_profiles)
+        except OSError:
+            print('Error deleting profiles file %s' % self.sta_profiles)
+
+    def _write_profiles(self, profiles):
         lines = []
         for ssid, password in profiles.items():
             lines.append('{0};{1}\n'.format(ssid, password))
         with open(self.sta_profiles, 'w') as myfile:
             myfile.write(''.join(lines))
 
-    def __ReadProfiles(self):
+    def _read_profiles(self):
         try:
             with open(self.sta_profiles) as myfile:
                 lines = myfile.readlines()
@@ -88,14 +95,7 @@ class WifiManager:
             profiles[ssid] = password
         return profiles
 
-    def __DeleteProfiles(self):
-        try:
-            if os.path.exists(self.sta_profiles):
-                os.remove(self.sta_profiles)
-        except OSError:
-            print('Error deleting profiles file %s' % self.sta_profiles)
-
-    def __WifiConnect(self, ssid, password):
+    def _wifi_connect(self, ssid, password):
         print('Trying to connect to:', ssid)
         self.wlan_sta.connect(ssid, password)
         for _ in range(100):
@@ -109,7 +109,7 @@ class WifiManager:
         self.wlan_sta.disconnect()
         return False
 
-    def __WebServer(self):
+    def _web_server(self):
         self.wlan_ap.active(True)
         self.wlan_ap.config(essid=self.ap_ssid, password=self.ap_password, authmode=self.ap_authmode)
         server_socket = usocket.socket()
@@ -146,24 +146,24 @@ class WifiManager:
                     url = ure.search('(?:GET|POST) /(.*?)(?:\\?.*?)? HTTP', self.request).group(1).decode(
                         'utf-8').rstrip('/')
                     if url == '':
-                        self.__HandleRoot()
+                        self._handle_root()
                     elif url == 'configure':
-                        self.__HandleConfigure()
+                        self._handle_configure()
                     else:
-                        self.__HandleNotFound()
+                        self._handle_not_found()
             except Exception:
                 print('Something went wrong! Reboot and try again.')
                 return
             finally:
                 self.client.close()
 
-    def __SendHeader(self, status_code=200):
+    def _send_header(self, status_code=200):
         self.client.send("""HTTP/1.1 {0} OK\r\n""".format(status_code))
         self.client.send("""Content-Type: text/html\r\n""")
         self.client.send("""Connection: close\r\n""")
 
-    def __SendResponse(self, payload, status_code=200):
-        self.__SendHeader(status_code)
+    def _send_response(self, payload, status_code=200):
+        self._send_header(status_code)
         self.client.sendall("""
             <!DOCTYPE html>
             <html lang="en">
@@ -180,8 +180,8 @@ class WifiManager:
         """.format(payload))
         self.client.close()
 
-    def __HandleRoot(self):
-        self.__SendHeader()
+    def _handle_root(self):
+        self._send_header()
         self.client.sendall("""
             <!DOCTYPE html>
             <html lang="en">
@@ -210,37 +210,39 @@ class WifiManager:
         """)
         self.client.close()
 
-    def __HandleConfigure(self):
+    def _handle_configure(self):
         match = ure.search('ssid=(.*)&password=(.*)', self.request)
         if match:
             ssid = match.group(1).decode('UTF-8').replace('+', ' ')
             password = match.group(2).decode('UTF-8')
-            ssid = self.decode_uri(ssid)
-            password = self.decode_uri(password)
+            ssid = self._decode_uri(ssid)
+            password = self._decode_uri(password)
             if len(ssid) == 0:
-                self.__SendResponse("""<p>SSID must be providaded!</p><p>Go back and try again!</p>""", 400)
-            elif self.__WifiConnect(ssid, password):
-                self.__SendResponse(
-                    """<p>Successfully connected to</p><h1>{0}</h1><p>IP address: {1}</p>""".format(ssid,
-                                                                                                    self.wlan_sta.ifconfig()[
-                                                                                                        0]))
-                profiles = self.__ReadProfiles()
+                self._send_response("""<p>SSID must be providaded!</p><p>Go back and try again!</p>""", 400)
+            elif self._wifi_connect(ssid, password):
+                self._send_response(
+                    """<p>Successfully connected to</p><h1>{0}</h1><p>IP address: {1}</p>
+                    """.format(ssid,
+                               self.wlan_sta.ifconfig()[
+                                   0]))
+                profiles = self._read_profiles()
                 profiles[ssid] = password
-                self.__WriteProfiles(profiles)
+                self._write_profiles(profiles)
                 utime.sleep(5)
             else:
-                self.__SendResponse(
+                self._send_response(
                     """<p>Could not connect to</p><h1>{0}</h1><p>Go back and try again!</p>""".format(ssid))
                 utime.sleep(5)
         else:
-            self.__SendResponse("""<p>Parameters not found!</p>""", 400)
+            self._send_response("""<p>Parameters not found!</p>""", 400)
             utime.sleep(5)
 
-    def __HandleNotFound(self):
-        self.__SendResponse("""<p>Path not found!</p>""", 404)
+    def _handle_not_found(self):
+        self._send_response("""<p>Path not found!</p>""", 404)
         utime.sleep(5)
 
-    def decode_uri(self, uri):
+    @staticmethod
+    def _decode_uri(uri):
         _uri = uri.split('%')
         if len(_uri[0]) >= 0:
             decoded_uri = ''.join([chr(int(_uri[i + 1][:2], 16)) + _uri[i + 1][2:] for i, _ in enumerate(_uri[1:])])
